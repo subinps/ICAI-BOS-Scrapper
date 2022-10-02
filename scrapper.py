@@ -1,4 +1,3 @@
-
 import os
 
 import requests
@@ -94,7 +93,7 @@ def handleTableOldStyle(url, path: str):
 
 
 COURSES = {
-    1: {"Foundation": "foundation-course"},
+    1: {"Foundation New": "foundation-course"},
     2: {"Intermediate New": "intermediate-course"},
     3: {"Intermediate Old": "intermediate-integrated-professional-competence-course"},
     4: {"Final New": "final-course-new-scheme-of-education-and-training"},
