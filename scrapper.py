@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
@@ -6,7 +7,8 @@ from bs4 import BeautifulSoup
 _URL = "https://www.icai.org"
 
 
-def makeDir(path: str):
+def makeDir(_path: str):
+    path = Path(_path.replace(":", "-"))
     if not os.path.isdir(path):
         os.makedirs(path)
     return path
@@ -21,12 +23,12 @@ def getTableContents(url):
     return []
 
 
-def downloadFile(url, fileName: str):
+def downloadFile(url: str, fileName: str):
     response = requests.get(url)
     extension = url.split(".")[-1]
-    file = fileName.strip() + f".{extension}"
-    os.makedirs(os.path.dirname(file), exist_ok=True)
-    with open(file, "wb+") as out:
+    file = fileName.strip().replace(":", "-") + f".{extension}"
+    os.makedirs(os.path.dirname(Path(file)), exist_ok=True)
+    with open(Path(file), "wb+") as out:
         out.write(response.content)
 
 
