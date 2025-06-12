@@ -1,132 +1,159 @@
+import json
 import os
-from pathlib import Path
-
+import re
 import requests
 from bs4 import BeautifulSoup
 
 _URL = "https://www.icai.org"
 
 
-def makeDir(_path: str):
-    path = Path(_path.replace(":", "-"))
-    if not os.path.isdir(path):
-        os.makedirs(path)
-    return path
-
-
-def getTableContents(url):
-    res = requests.get(url)
-    soup = BeautifulSoup(res.text, "html.parser")
-    table = soup.find("div", {"class": "table-responsive"})
-    if table:
-        return table.find_all("li")  # type: ignore
-    return []
-
-
-def downloadFile(url: str, fileName: str):
-    response = requests.get(url)
-    extension = url.split(".")[-1]
-    file = fileName.strip().replace(":", "-") + f".{extension}"
-    os.makedirs(os.path.dirname(Path(file)), exist_ok=True)
-    with open(Path(file), "wb+") as out:
-        out.write(response.content)
-
-
-def handleChild(child, path):
-    for i in child:
-        _sub = i.find("a")
-        if not _sub:
-            continue
-        name = _sub.text
-        _path = path + f"/{name}"
-        url = _sub["href"]
-        if url.startswith("https://resource.cdn"):
-            downloadFile(url, _path)
-            print(f"Downloading: {url} to {_path}", flush=True)
-        else:
-            makeDir(_path)
-            if url.startswith(".."):
-                link = _URL + url.lstrip("..")
-            else:
-                link = url
-            child = getTableContents(link)
-            if not child:
-                handleTableOldStyle(link, _path)
-            handleChild(child, _path)
-
-
-def handleTableOldStyle(url, path: str):
-    res = requests.get(url)
-    soup = BeautifulSoup(res.text, "html.parser")
-    table = soup.find("div", {"class": "table-responsive"})
-    if table:
-        table = table.find_all("tr")  # type: ignore
-    else:
-        return
-    _first = _second = path
-    first, second = _first, _second
-    __first, __second = first, second
-    for i in table:
-        head = i.find_all("strong")
-        if head:
-            if len(head) > 1:
-                first = makeDir(_first + f"/{head[0].text}")
-                second = makeDir(_second + f"/{head[1].text}")
-            elif head[0].text.strip():
-                __first = makeDir(first + f"/{head[0].text}")
-                __second = makeDir(second + f"/{head[0].text}")
-        else:
-            columns = i.find_all("td")
-            if len(columns) == 2:
-                material, practiceManual = columns
-            else:
-                material, practiceManual = columns[0], []
-            links = material.find_all("a")
-            for i in links:
-                url = i["href"]
-                if url.startswith("https://resource.cdn"):
-                    downloadFile(i["href"], f"{__first}/{i.text}")
-            if practiceManual:
-                links = practiceManual.find_all("a")  # type: ignore
-                for i in links:
-                    url = i["href"]
-                    if url.startswith("https://resource.cdn"):
-                        downloadFile(i["href"], f"{__second}/{i.text}")
-
-
-COURSES = {
-    1: {"Foundation New": "foundation-course"},
-    2: {"Intermediate New": "intermediate-course"},
-    3: {"Intermediate Old": "intermediate-integrated-professional-competence-course"},
-    4: {"Final New": "final-course-new-scheme-of-education-and-training"},
-    5: {"Final Old": "final-course-old-scheme-of-education-and-training"},
+treeInfo = {
+    "final": [
+        {"url": "/post/sm-final-p1-may2025", "name": "Paper -1 - Financial Reporting"},
+        {
+            "url": "/post/sm-final-p2-may2025",
+            "name": "Paper-2: Advanced Financial Management",
+        },
+        {
+            "url": "/post/sm-final-p3-may2025",
+            "name": "Paper-3: Advanced Auditing, Assurance and Professional Ethics",
+        },
+        {
+            "url": "/post/sm-final-p4-may-nov2025",
+            "name": "Paper-4: Direct Tax Laws & International Taxation",
+        },
+        {"url": "/post/sm-final-p5-may-nov-2025", "name": "Paper-5: Indirect Tax Laws"},
+    ]
 }
 
 
-def main():
-    print(">>>> ICAI BOS Downloader by https://github.com/subinps <<<<")
-    print("\n")
-    for i in COURSES:
-        print(i, ": ", list(COURSES[i].keys())[0], "\n")
-    while True:
-        course = input("Enter the number corresponding to your course: ")
-        try:
-            course = int(course)
-        except Exception:
-            print("!Invalid, Enter A Number between 1-5\n")
-            continue
+def sanitize(filename: str, replacement: str = "-") -> str:
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1F]'
+    sanitized = re.sub(invalid_chars, replacement, filename)
+    sanitized = sanitized.rstrip(" .")
+    return sanitized[:255]
+
+
+def capitalize_words(text: str) -> str:
+    return " ".join(word.capitalize() for word in text.split())
+
+
+def generateJson(module, primitive: bool = False):
+    if primitive:
+        group_data = {"group": "MODULE 1", "subgroups": []}
+        mainTable =  module
+    else:
+        group_name = module.contents[0].strip()
+        group_data = {"group": group_name, "subgroups": []}
+        mainTable = module.find_all("ul", recursive=False)[0].find_all(
+        "li", recursive=False
+    )
+
+    for item in mainTable:
+        if item.find("ul"):
+            subgroup_title = item.contents[0].strip()
+            units = [
+                {"title": a.get_text(strip=True), "link": a["href"]}
+                for a in item.find("ul").find_all("a")
+            ]
+            group_data["subgroups"].append({"subgroup": subgroup_title, "units": units})
         else:
-            if course in COURSES:
-                break
-            else:
-                print("!Invalid, Enter A Number between 1-5\n")
-    url = list(COURSES[course].values())[0]
-    name = list(COURSES[course].keys())[0]
-    res = requests.get(_URL + f"/post/{url}")
+            a_tag = item.find("a")
+            if a_tag:
+                title = a_tag.get_text(strip=True)
+                group_data["subgroups"].append(
+                    {
+                        "subgroup": title,
+                        "units": [{"title": title, "link": a_tag["href"]}],
+                    }
+                )
+
+    return group_data
+
+
+def print_header(title: str):
+    print("\n" + "=" * 80)
+    print(title.center(80))
+    print("=" * 80 + "\n")
+
+
+def main():
+    print_header("ICAI FINAL STUDY MATERIAL DOWNLOADER")
+    print("Available Papers:")
+    for i, paper in enumerate(treeInfo["final"], 1):
+        print(f"{i}. {paper['name']}")
+
+    paperSelect = input("\nEnter the number corresponding to the paper: ").strip()
+    if not paperSelect.isdigit() or not (
+        1 <= int(paperSelect) <= len(treeInfo["final"])
+    ):
+        print("\n[!] Invalid selection. Exiting...")
+        return
+
+    paper_index = int(paperSelect) - 1
+    isPrimitive = True if paper_index == 1 else False
+    selected_paper = treeInfo["final"][paper_index]
+    paper_name = selected_paper["name"]
+    url = _URL + selected_paper["url"]
+
+    print(f"\nSelected Paper: {paper_name}\nFetching modules from: {url}\n")
+    res = requests.get(url)
     soup = BeautifulSoup(res.text, "html.parser")
-    subjects = soup.find("ul", {"style": "list-style-type: disc;"}).find_all("li")  # type: ignore
-    makeDir(name)
-    handleChild(subjects, name)
+    mainTable = soup.find("ul", {"style": "list-style-type: disc;"})
+    allModules = mainTable.find_all("li", recursive=False)
+
+    print(f"Found {len(allModules)} modules.\n")
+
+    json_data = {"paper": paper_name, "modules": []}
+    if isPrimitive:
+        print(f"{i}. Processing module")
+        json_data["modules"].append(generateJson(allModules, primitive=True))
+    else:
+        for i, module in enumerate(allModules, 1):
+            print(f"{i}. Processing module: {module.contents[0].strip()}")
+            json_data["modules"].append(generateJson(module))
+
+    os.makedirs("json", exist_ok=True)
+    output_filename = f"{sanitize(paper_name)}.json"
+    output_path = os.path.join("json", output_filename)
+
+    with open(output_path, "w") as f:
+        json.dump(json_data, f, indent=4)
+
+    print(f"\n[✓] JSON saved to: {output_path}\n")
+
+    parentFolder = sanitize(paper_name)
+    os.makedirs(parentFolder, exist_ok=True)
+
+    for mod_idx, module in enumerate(json_data["modules"], 1):
+        module_name = sanitize(f"{mod_idx}. {capitalize_words(module['group'])}")
+        module_path = os.path.join(parentFolder, module_name)
+        os.makedirs(module_path, exist_ok=True)
+        print(f"\n[+] Module: {module_name}")
+
+        for sub_idx, subgroup in enumerate(module["subgroups"], 1):
+            subgroup_name = sanitize(
+                f"{sub_idx}. {capitalize_words(subgroup['subgroup'])}"
+            )
+            subgroup_path = os.path.join(module_path, subgroup_name)
+            os.makedirs(subgroup_path, exist_ok=True)
+            print(f"  [-] Subgroup: {subgroup_name}")
+
+            for unit_idx, unit in enumerate(subgroup["units"], 1):
+                unit_title = (
+                    sanitize(f"{unit_idx}. {capitalize_words(unit['title'])}") + ".pdf"
+                )
+                unit_link = unit["link"]
+                unit_path = os.path.join(subgroup_path, unit_title)
+
+                print(f"    [>] Downloading: {unit_title}")
+                res = requests.get(unit_link)
+                if res.status_code == 200:
+                    with open(unit_path, "wb") as file:
+                        file.write(res.content)
+                    print(f"        [✓] Saved to: {unit_path}")
+                else:
+                    print(f"        [!] Failed (Status: {res.status_code})")
 
 
 if __name__ == "__main__":
